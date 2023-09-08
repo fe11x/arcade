@@ -76,6 +76,10 @@ class PymunkPhysicsEngine:
                    max_vertical_velocity: Optional[int] = None,
                    radius: float = 0,
                    collision_type: Optional[str] = "default",
+                   concave = False,
+                   body = None,
+                   shape = None,
+                   skip_debug_draw=True,
                    ):
         """ Add a sprite to the physics engine.
 
@@ -129,11 +133,12 @@ class PymunkPhysicsEngine:
             moment_of_inertia = pymunk.moment_for_box(mass, (sprite.width, sprite.height))
 
         # Create the physics body
-        body = pymunk.Body(mass, moment_of_inertia, body_type=body_type)
+        if body is None:
+            body = pymunk.Body(mass, moment_of_inertia, body_type=body_type)
 
         # Set the body's position
         body.position = pymunk.Vec2d(sprite.center_x, sprite.center_y)
-        body.angle = math.radians(sprite.angle)
+        body.angle = math.radians(-sprite.angle)
 
         # Callback used if we need custom gravity, damping, velocity, etc.
         def velocity_callback(my_body: pymunk.Body, my_gravity: Tuple[float, float], my_damping: float, dt: float):
@@ -183,7 +188,33 @@ class PymunkPhysicsEngine:
         # Set the physics shape to the sprite's hitbox
         poly = sprite.hit_box.points
         scaled_poly = [[x * sprite.scale for x in z] for z in poly]
-        shape = pymunk.Poly(body, scaled_poly, radius=radius)  # type: ignore
+
+        if concave:       # 加了这段代码
+            self.space.add(body)
+            scaled_poly.append(scaled_poly[0])
+            scaled_poly.reverse()
+            pts_list = pymunk.autogeometry.convex_decomposition(scaled_poly, 1)
+            for pts in pts_list:
+                shape = pymunk.Poly(body, pts, radius=radius)
+                if collision_type:
+                    shape.collision_type = collision_type_id
+                if elasticity is not None:
+                    shape.elasticity = elasticity
+                shape.friction = friction
+                if skip_debug_draw:
+                    shape.color = (0, 0, 0, 0)
+                physics_object = PymunkPhysicsObject(body, shape)
+                self.sprites[sprite] = physics_object    # PymunkPhysicsObject定义的body和shape是一对一关系，所以这里对于dynamic obj需要删除时估计有问题，所以目前只对static obj使用concave=True比较稳妥
+                if body_type != self.STATIC:
+                    self.non_static_sprite_list.append(sprite)
+                self.space.add(shape)
+            sprite.register_physics_engine(self)
+            return
+
+        if shape is None:
+            shape = pymunk.Poly(body, scaled_poly, radius=radius)  # type: ignore
+        if skip_debug_draw:
+            shape.color = (0, 0, 0, 0)
 
         # Set collision type, used in collision callbacks
         if collision_type:
@@ -217,7 +248,8 @@ class PymunkPhysicsEngine:
                         moment_of_inertia: Optional[float] = None,
                         body_type: int = DYNAMIC,
                         damping: Optional[float] = None,
-                        collision_type: Optional[str] = None
+                        collision_type: Optional[str] = None,
+                        concave = False,
                         ):
         """ Add all sprites in a sprite list to the physics engine. """
 
@@ -229,7 +261,8 @@ class PymunkPhysicsEngine:
                             moment_of_inertia=moment_of_inertia,
                             body_type=body_type,
                             damping=damping,
-                            collision_type=collision_type)
+                            collision_type=collision_type,
+                            concave=concave)
 
     def remove_sprite(self, sprite: Sprite):
         """ Remove a sprite from the physics engine. """
